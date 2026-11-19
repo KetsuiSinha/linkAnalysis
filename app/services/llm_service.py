@@ -8,7 +8,7 @@ content, keeping the endpoint functional without any third-party credentials.
 """
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from app.config import settings
 from app.services.website_extractor import extract_website_content
@@ -130,8 +130,8 @@ class LLMService:
                 "seo_improvements": self._build_seo(
                     brand_name, category, primary_keyword, description
                 ),
-                "top_services": self._infer_services(text, headings, links),
-                "target_audience": self._build_audience(category, brand_name),
+                "top_services": self._infer_services(headings, links),
+                "target_audience": self._build_audience(category),
             },
         )
 
@@ -142,17 +142,16 @@ class LLMService:
     def _shape_response(
         url: str, data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        section_keys = {
+        section_keys = (
             "competitor_analysis",
             "target_search_queries",
             "seo_improvements",
             "top_services",
             "target_audience",
+        )
+        analysis_block = {
+            key: data[key] for key in section_keys if key in data
         }
-        analysis_block: Dict[str, Any] = {}
-        for key in section_keys:
-            if key in data:
-                analysis_block[key] = data.pop(key)
 
         return {
             "success": True,
@@ -241,7 +240,7 @@ Return exactly 5 target search queries and exactly 5 top services where possible
         return "Technology Services"
 
     @staticmethod
-    def _infer_services(text: str, headings: list, links: list) -> List[Dict[str, Any]]:
+    def _infer_services(headings: list, links: list) -> List[Dict[str, Any]]:
         services: List[Dict[str, Any]] = []
         seen = set()
         candidates = [
@@ -349,7 +348,7 @@ Return exactly 5 target search queries and exactly 5 top services where possible
         }
 
     @staticmethod
-    def _build_audience(category: str, brand_name: str) -> Dict[str, Any]:
+    def _build_audience(category: str) -> Dict[str, Any]:
         return {
             "primary_audience": ["Small businesses", "Startups"],
             "secondary_audience": ["Enterprise companies", "Professional services"],

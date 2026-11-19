@@ -42,16 +42,16 @@ class Competitor(BaseModel):
 
 class CompetitorAnalysis(BaseModel):
     brand_overview: str
-    competitors: List[Competitor] = []
-    strengths: List[str] = []
-    weaknesses_or_gaps: List[str] = []
-    competitive_advantages: List[str] = []
-    opportunities: List[str] = []
+    competitors: List[Competitor] = Field(default_factory=list)
+    strengths: List[str] = Field(default_factory=list)
+    weaknesses_or_gaps: List[str] = Field(default_factory=list)
+    competitive_advantages: List[str] = Field(default_factory=list)
+    opportunities: List[str] = Field(default_factory=list)
 
 
 class SearchQuery(BaseModel):
     query: str
-    platforms: List[str] = []
+    platforms: List[str] = Field(default_factory=list)
     intent: str
     business_relevance: str
     target_audience: str
@@ -59,13 +59,13 @@ class SearchQuery(BaseModel):
 
 class SEOImprovements(BaseModel):
     primary_keyword: str
-    secondary_keywords: List[str] = []
-    long_tail_keywords: List[str] = []
-    relevant_business_keywords: List[str] = []
+    secondary_keywords: List[str] = Field(default_factory=list)
+    long_tail_keywords: List[str] = Field(default_factory=list)
+    relevant_business_keywords: List[str] = Field(default_factory=list)
     recommended_title: str
     improved_title_structure: str
     meta_description: str
-    supporting_content: List[str] = []
+    supporting_content: List[str] = Field(default_factory=list)
 
 
 class Service(BaseModel):
@@ -81,22 +81,22 @@ class Service(BaseModel):
 
 
 class TargetAudience(BaseModel):
-    primary_audience: List[str] = []
-    secondary_audience: List[str] = []
-    industry_segments: List[str] = []
-    business_types: List[str] = []
-    customer_profiles: List[str] = []
+    primary_audience: List[str] = Field(default_factory=list)
+    secondary_audience: List[str] = Field(default_factory=list)
+    industry_segments: List[str] = Field(default_factory=list)
+    business_types: List[str] = Field(default_factory=list)
+    customer_profiles: List[str] = Field(default_factory=list)
     location_focus: Optional[str] = None
-    customer_needs: List[str] = []
-    customer_interests: List[str] = []
-    recommended_segments: List[str] = []
+    customer_needs: List[str] = Field(default_factory=list)
+    customer_interests: List[str] = Field(default_factory=list)
+    recommended_segments: List[str] = Field(default_factory=list)
 
 
 class AnalysisResult(BaseModel):
     competitor_analysis: CompetitorAnalysis
-    target_search_queries: List[SearchQuery] = []
+    target_search_queries: List[SearchQuery] = Field(default_factory=list)
     seo_improvements: SEOImprovements
-    top_services: List[Service] = []
+    top_services: List[Service] = Field(default_factory=list)
     target_audience: TargetAudience
 
 

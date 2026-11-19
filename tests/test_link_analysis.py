@@ -1,12 +1,17 @@
 """Unit tests for validators and request schemas."""
 
-import sys
 import os
+import sys
+
+import pytest
+from fastapi import HTTPException
+from pydantic import ValidationError
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from app.utils.validators import validate_url_for_fetch, is_private_or_localhost
 from app.schemas import LinkAnalysisRequest
+from app.services.llm_service import LLMService
+from app.utils.validators import is_private_or_localhost, validate_url_for_fetch
 
 
 def test_localhost_blocked():
@@ -30,16 +35,24 @@ def test_valid_request():
 
 
 def test_invalid_scheme_rejected():
-    try:
+    with pytest.raises(ValidationError):
         LinkAnalysisRequest(url="ftp://example.com")
-        raise AssertionError("Should have raised for ftp scheme")
-    except Exception:
-        pass
 
 
 def test_private_url_rejected():
-    try:
+    with pytest.raises(HTTPException) as exc_info:
         validate_url_for_fetch("http://192.168.1.1/")
-        raise AssertionError("Should have raised for private IP")
-    except Exception:
-        pass
+    assert exc_info.value.status_code == 400
+
+
+def test_response_shaping_preserves_input_data():
+    data = {
+        "brand": {"name": "Example", "category": "Technology", "summary": ""},
+        "competitor_analysis": {"competitors": []},
+    }
+    original_data = data.copy()
+
+    response = LLMService._shape_response("https://example.com", data)
+
+    assert data == original_data
+    assert response["analysis"] == {"competitor_analysis": {"competitors": []}}
