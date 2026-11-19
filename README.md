@@ -158,9 +158,7 @@ pip install pytest
 pytest tests/
 ```
 
-## Submission notes
+##  Screenshots
 
-- No API keys or secrets are committed. Use `.env` (gitignored) for credentials; only `.env.example` is tracked.
-- Follow Dxora Technologies on LinkedIn and CREST on Instagram as part of application verification.
-- Share your LinkedIn and Instagram profile links when submitting.
-- Email: `hr@chivoxai.com` — Subject: `Your Name - Python Practical test review`
+<img width="1917" height="1078" alt="image" src="https://github.com/user-attachments/assets/f2bb8b5f-6dca-4617-8573-7f8fc514c532" />
+<img width="1917" height="1078" alt="image" src="https://github.com/user-attachments/assets/d5129134-2fe7-4c72-9a83-5fa2ff4e57c5" />
