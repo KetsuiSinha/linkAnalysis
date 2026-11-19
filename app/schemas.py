@@ -1,12 +1,11 @@
 """Request and response schemas for the link-analysis API.
 
-All models use Pydantic v2. The response shape mirrors the example in the
-assignment brief so reviewers can map each field directly to the spec.
+Pydantic v1 models (pure Python, no Rust compilation required for deployment).
 """
 
 from typing import Any, List, Optional
 
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, validator
 
 
 class LinkAnalysisRequest(BaseModel):
@@ -14,7 +13,7 @@ class LinkAnalysisRequest(BaseModel):
 
     url: HttpUrl = Field(..., description="Website URL to analyze")
 
-    @field_validator("url")
+    @validator("url")
     @classmethod
     def url_must_be_http_or_https(cls, v: HttpUrl) -> HttpUrl:
         if v.scheme not in ("http", "https"):
@@ -42,16 +41,16 @@ class Competitor(BaseModel):
 
 class CompetitorAnalysis(BaseModel):
     brand_overview: str
-    competitors: List[Competitor] = Field(default_factory=list)
-    strengths: List[str] = Field(default_factory=list)
-    weaknesses_or_gaps: List[str] = Field(default_factory=list)
-    competitive_advantages: List[str] = Field(default_factory=list)
-    opportunities: List[str] = Field(default_factory=list)
+    competitors: List[Competitor] = []
+    strengths: List[str] = []
+    weaknesses_or_gaps: List[str] = []
+    competitive_advantages: List[str] = []
+    opportunities: List[str] = []
 
 
 class SearchQuery(BaseModel):
     query: str
-    platforms: List[str] = Field(default_factory=list)
+    platforms: List[str] = []
     intent: str
     business_relevance: str
     target_audience: str
@@ -59,13 +58,13 @@ class SearchQuery(BaseModel):
 
 class SEOImprovements(BaseModel):
     primary_keyword: str
-    secondary_keywords: List[str] = Field(default_factory=list)
-    long_tail_keywords: List[str] = Field(default_factory=list)
-    relevant_business_keywords: List[str] = Field(default_factory=list)
+    secondary_keywords: List[str] = []
+    long_tail_keywords: List[str] = []
+    relevant_business_keywords: List[str] = []
     recommended_title: str
     improved_title_structure: str
     meta_description: str
-    supporting_content: List[str] = Field(default_factory=list)
+    supporting_content: List[str] = []
 
 
 class Service(BaseModel):
@@ -81,22 +80,22 @@ class Service(BaseModel):
 
 
 class TargetAudience(BaseModel):
-    primary_audience: List[str] = Field(default_factory=list)
-    secondary_audience: List[str] = Field(default_factory=list)
-    industry_segments: List[str] = Field(default_factory=list)
-    business_types: List[str] = Field(default_factory=list)
-    customer_profiles: List[str] = Field(default_factory=list)
+    primary_audience: List[str] = []
+    secondary_audience: List[str] = []
+    industry_segments: List[str] = []
+    business_types: List[str] = []
+    customer_profiles: List[str] = []
     location_focus: Optional[str] = None
-    customer_needs: List[str] = Field(default_factory=list)
-    customer_interests: List[str] = Field(default_factory=list)
-    recommended_segments: List[str] = Field(default_factory=list)
+    customer_needs: List[str] = []
+    customer_interests: List[str] = []
+    recommended_segments: List[str] = []
 
 
 class AnalysisResult(BaseModel):
     competitor_analysis: CompetitorAnalysis
-    target_search_queries: List[SearchQuery] = Field(default_factory=list)
+    target_search_queries: List[SearchQuery] = []
     seo_improvements: SEOImprovements
-    top_services: List[Service] = Field(default_factory=list)
+    top_services: List[Service] = []
     target_audience: TargetAudience
 
 

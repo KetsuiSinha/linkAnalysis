@@ -62,7 +62,7 @@ def link_analysis(request: LinkAnalysisRequest):
                 success=False,
                 error="Analysis failed",
                 detail=str(exc),
-            ).model_dump(),
+            ).dict(),
         )
 
     if not result.get("success"):
@@ -71,7 +71,7 @@ def link_analysis(request: LinkAnalysisRequest):
             content=ErrorResponse(
                 success=False,
                 error=result.get("error", "Unknown error"),
-            ).model_dump(),
+            ).dict(),
         )
 
     return result
