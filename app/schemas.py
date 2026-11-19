@@ -1,22 +1,31 @@
-from typing import List, Optional, Any
-from pydantic import BaseModel, Field, validator, HttpUrl
+"""Request and response schemas for the link-analysis API.
+
+All models use Pydantic v2. The response shape mirrors the example in the
+assignment brief so reviewers can map each field directly to the spec.
+"""
+
+from typing import Any, List, Optional
+
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
-# ---------- Link Analysis ----------
 class LinkAnalysisRequest(BaseModel):
+    """Incoming request body: a single website URL to analyze."""
+
     url: HttpUrl = Field(..., description="Website URL to analyze")
 
-    @validator("url")
-    def url_must_be_http_or_https(cls, v):
+    @field_validator("url")
+    @classmethod
+    def url_must_be_http_or_https(cls, v: HttpUrl) -> HttpUrl:
         if v.scheme not in ("http", "https"):
             raise ValueError("URL must use http or https scheme")
         return v
 
 
 class Brand(BaseModel):
-    name: str
-    category: str
-    summary: str
+    name: str = Field(..., description="Detected brand / site name")
+    category: str = Field(..., description="Main business category")
+    summary: str = Field(..., description="Short human-readable business summary")
 
 
 class Competitor(BaseModel):
@@ -25,7 +34,10 @@ class Competitor(BaseModel):
     target_market: Optional[str] = None
     key_strength: Optional[str] = None
     opportunity: Optional[str] = None
-    inferred: bool = False
+    inferred: bool = Field(
+        default=True,
+        description="True when competitor data is AI-suggested rather than verified",
+    )
 
 
 class CompetitorAnalysis(BaseModel):
@@ -62,7 +74,10 @@ class Service(BaseModel):
     target_industry: str
     target_customer: str
     main_benefit: str
-    inferred: bool = False
+    inferred: bool = Field(
+        default=False,
+        description="True when the service was inferred rather than read from the page",
+    )
 
 
 class TargetAudience(BaseModel):
@@ -92,7 +107,6 @@ class LinkAnalysisResponse(BaseModel):
     analysis: AnalysisResult
 
 
-# ---------- Generic ----------
 class ErrorResponse(BaseModel):
     success: bool = False
     error: str

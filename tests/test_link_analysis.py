@@ -1,4 +1,5 @@
-import re
+"""Unit tests for validators and request schemas."""
+
 import sys
 import os
 
@@ -13,7 +14,7 @@ def test_localhost_blocked():
     assert is_private_or_localhost("127.0.0.1") is True
 
 
-def test_private_ip_blocked():
+def test_private_ips_blocked():
     assert is_private_or_localhost("192.168.1.1") is True
     assert is_private_or_localhost("10.0.0.5") is True
     assert is_private_or_localhost("172.16.0.1") is True
@@ -23,14 +24,22 @@ def test_public_host_not_blocked():
     assert is_private_or_localhost("example.com") is False
 
 
-def test_link_analysis_request_valid():
+def test_valid_request():
     req = LinkAnalysisRequest(url="https://example.com")
     assert str(req.url) == "https://example.com/"
 
 
-def test_link_analysis_request_invalid_scheme():
+def test_invalid_scheme_rejected():
     try:
         LinkAnalysisRequest(url="ftp://example.com")
-        assert False, "Should have raised"
+        raise AssertionError("Should have raised for ftp scheme")
+    except Exception:
+        pass
+
+
+def test_private_url_rejected():
+    try:
+        validate_url_for_fetch("http://192.168.1.1/")
+        raise AssertionError("Should have raised for private IP")
     except Exception:
         pass

@@ -1,14 +1,14 @@
 # Dxora Test - AI-Powered Website Link Analysis API
 
-A FastAPI application that analyzes a given website URL, understands its content using an LLM, and generates structured business, competitor, SEO, search query, and target audience insights.
+A FastAPI application that analyzes a website URL, understands its content using an LLM, and returns structured business, competitor, SEO, search-query, and target-audience insights.
 
 ## Endpoint (port 4000)
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `POST /link-analysis` | POST | Analyze a website URL (5 analysis sections) |
+| `POST /link-analysis` | POST | Analyze a website URL and return five insight sections |
 | `GET /docs` | GET | Interactive Swagger UI |
-| `GET /` | GET | Service info |
+| `GET /` | GET | Service health/info |
 
 ## Project structure
 
@@ -16,21 +16,22 @@ A FastAPI application that analyzes a given website URL, understands its content
 linkAnalysis/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py          # FastAPI app + /link-analysis endpoint
-│   ├── config.py        # Pydantic Settings (.env)
-│   ├── schemas.py       # Pydantic request/response models
+│   ├── main.py           # FastAPI app + /link-analysis endpoint
+│   ├── config.py         # Pydantic Settings (.env)
+│   ├── schemas.py        # Pydantic v2 request/response models
 │   ├── services/
 │   │   ├── __init__.py
-│   │   ├── analysis_service.py
-│   │   ├── competitor_service.py
-│   │   ├── llm_service.py          # OpenAI + rule-based fallback
-│   │   └── website_extractor.py    # HTTPX + BeautifulSoup
+│   │   ├── analysis_service.py   # Thin orchestration layer
+│   │   ├── competitor_service.py # Competitor normalization
+│   │   ├── llm_service.py        # OpenAI client + rule-based fallback
+│   │   └── website_extractor.py  # HTTPX + BeautifulSoup fetcher
 │   └── utils/
 │       ├── __init__.py
-│       └── validators.py           # URL validation + SSRF protection
+│       └── validators.py         # URL validation + SSRF protection
 ├── tests/
 │   └── test_link_analysis.py
 ├── .env.example
+├── .gitignore
 ├── requirements.txt
 └── README.md
 ```
@@ -38,22 +39,25 @@ linkAnalysis/
 ## Setup
 
 ```bash
-# 1. Create virtual environment
+# 1. Create and activate a virtual environment
 python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+# macOS/Linux:
+source .venv/bin/activate
+# Windows:
+.venv\Scripts\activate
 
 # 2. Install dependencies
 pip install -r requirements.txt
 
 # 3. Configure environment
 cp .env.example .env
-# Edit .env and add OPENAI_API_KEY (or leave blank for rule-based fallback)
+# Edit .env and add OPENAI_API_KEY (optional; rule-based fallback works without it)
 
 # 4. Run the server
 uvicorn app.main:app --host 0.0.0.0 --port 4000
 ```
 
-Open http://localhost:4000/docs for the interactive API docs.
+Open http://localhost:4000/docs for the interactive API documentation.
 
 ## Example request
 
@@ -71,9 +75,9 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "website": "https://example.com",
+  "website": "https://example.com/",
   "brand": {
-    "name": "Example",
+    "name": "Example Domain",
     "category": "Technology Services",
     "summary": "..."
   },
@@ -87,57 +91,65 @@ Content-Type: application/json
       "opportunities": [...]
     },
     "target_search_queries": [
-      {"query": "Best technology services company", "platforms": ["Google", "LinkedIn"], "intent": "Service Discovery", ...}
+      {
+        "query": "Best technology services company",
+        "platforms": ["Google", "LinkedIn"],
+        "intent": "Service Discovery",
+        "business_relevance": "...",
+        "target_audience": "..."
+      }
     ],
     "seo_improvements": {
       "primary_keyword": "...",
+      "secondary_keywords": [...],
       "recommended_title": "...",
       "meta_description": "...",
       "supporting_content": [...]
     },
     "top_services": [...],
-    "target_audience": {...}
+    "target_audience": {
+      "primary_audience": [...],
+      "secondary_audience": [...],
+      "industries": [...],
+      "customer_needs": [...]
+    }
   }
 }
 ```
 
-## LLM Platform Research & Recommendation
+## How it works
 
-### Comparison
+1. **Validate** the URL (http/https only; private/internal addresses are blocked for SSRF safety).
+2. **Fetch** the page with HTTPX and extract readable text via BeautifulSoup (scripts, styles, nav, footers, and iframes are stripped).
+3. **Analyze** with OpenAI `gpt-4o-mini` (structured JSON output) when an API key is present. When no key is configured, or the LLM call fails, a deterministic rule-based analyzer builds the same shape from the extracted content so the endpoint still returns valid JSON.
+4. **Return** the five sections required by the brief: competitor analysis, target search queries, SEO improvements, top 5 services, and target audience.
 
-| Provider | Model | API Cost (input/output) | Context Window | JSON Support | Recommendation |
+## LLM research & recommendation
+
+| Provider | Model | Approx. cost (in/out per 1M) | Context window | JSON support | Verdict |
 |---|---|---|---|---|---|
-| OpenAI | gpt-4o-mini | $0.15 / $0.60 per 1M tokens | 128K | Yes (`response_format`) | Best balance |
-| OpenAI | gpt-4o | $2.50 / $10.00 per 1M tokens | 128K | Yes | Highest accuracy, higher cost |
-| Google Gemini | gemini-1.5-flash | $0.075 / $0.30 per 1M tokens | 1M | Yes | Cheapest, very fast |
-| Anthropic Claude | claude-3-haiku | $0.25 / $1.25 per 1M tokens | 200K | Yes | Fast, good accuracy |
+| OpenAI | gpt-4o-mini | $0.15 / $0.60 | 128K | Yes (`response_format`) | Best balance |
+| OpenAI | gpt-4o | $2.50 / $10.00 | 128K | Yes | Highest accuracy, higher cost |
+| Google Gemini | gemini-1.5-flash | $0.075 / $0.30 | 1M | Yes | Cheapest, very fast |
+| Anthropic Claude | claude-3-haiku | $0.25 / $1.25 | 200K | Yes | Fast, solid accuracy |
 
-*Pricing is approximate and based on public provider documentation. Verify current pricing before production use.*
+*Pricing is approximate and based on public provider documentation; verify before production use.*
 
-### Recommended model
-
-**Provider:** OpenAI  
-**Model:** `gpt-4o-mini`  
-**Estimated input tokens:** ~3,000–6,000 per analysis (cleaned content)  
-**Estimated output tokens:** ~800–1,500 per analysis  
-**Estimated cost per analysis:** ~$0.001–$0.005  
-**Expected response time:** 2–6 seconds  
-**Reason:** Strong structured-JSON support via `response_format`, good accuracy for content understanding, low cost, and 128K context window handles typical website content.  
-**Fallback:** `gemini-1.5-flash` (lowest cost, largest context).  
-**No-key fallback:** The app includes a deterministic rule-based analyzer so the endpoint works without an API key.
+**Recommended:** OpenAI `gpt-4o-mini` — reliable structured-JSON output, good accuracy for content understanding, low cost, and a 128K context window that comfortably holds a cleaned page. **Fallback:** `gemini-1.5-flash` (lowest cost, largest context). **No-key fallback:** the app's built-in rule-based analyzer.
 
 ### Cost optimization
-- Strip scripts, styles, nav, footer, iframes before sending content to the LLM.
-- Truncate body text to ~12K chars.
-- Use `gpt-4o-mini` (smaller, cheaper) instead of `gpt-4o`.
-- Single LLM call produces all five sections (avoids repeated calls).
+- Strip scripts, styles, nav, footer, and iframes before sending content to the LLM.
+- Cap body text at ~12K characters to keep prompts small.
+- Use `gpt-4o-mini` instead of `gpt-4o`.
+- A single LLM call produces all five sections (no repeated calls).
 - Cache results per URL where appropriate.
 
 ## Error handling
-- Invalid URLs → 400 with a clear message.
-- SSRF protection: localhost, private IPs (10.x, 172.16–31.x, 192.168.x), link-local, and loopback addresses are blocked.
-- Unreachable websites → 400 with the fetch error.
-- LLM failure → automatic rule-based fallback so the response is still valid JSON.
+
+- Invalid URL scheme or missing hostname → `400`
+- Private/internal addresses (localhost, 10.x, 172.16–31.x, 192.168.x, link-local) → `400` (SSRF protection)
+- Unreachable website or HTTP ≥ 400 → `400` with the fetch error
+- LLM failure → automatic rule-based fallback; response is still valid JSON
 
 ## Testing
 
@@ -147,7 +159,8 @@ pytest tests/
 ```
 
 ## Submission notes
-- No API keys or secrets are committed. Use `.env` (gitignored) for credentials.
+
+- No API keys or secrets are committed. Use `.env` (gitignored) for credentials; only `.env.example` is tracked.
 - Follow Dxora Technologies on LinkedIn and CREST on Instagram as part of application verification.
 - Share your LinkedIn and Instagram profile links when submitting.
-- Email: hr@chivoxai.com — Subject: `Your Name - Python Practical test review`
+- Email: `hr@chivoxai.com` — Subject: `Your Name - Python Practical test review`

@@ -1,8 +1,16 @@
+"""URL validation and SSRF protection.
+
+Blocks localhost, private IP ranges (RFC 1918), loopback, link-local, and
+other internal addresses so the fetcher cannot be used to probe the
+internal network.
+"""
+
 import ipaddress
 import socket
 from typing import Optional
-from fastapi import HTTPException
+from urllib.parse import urlparse
 
+from fastapi import HTTPException
 
 PRIVATE_NETWORKS = [
     ipaddress.ip_network("10.0.0.0/8"),
@@ -19,12 +27,15 @@ FORBIDDEN_HOSTS = {"localhost", "localhost.localdomain", "local"}
 
 
 def is_private_or_localhost(hostname: str) -> bool:
+    """Return True if ``hostname`` resolves to a private/internal address."""
     if not hostname or hostname.lower() in FORBIDDEN_HOSTS:
         return True
+
     try:
         infos = socket.getaddrinfo(hostname, None)
     except Exception:
         return True
+
     for info in infos:
         sockaddr = info[4]
         if not sockaddr:
@@ -43,7 +54,7 @@ def is_private_or_localhost(hostname: str) -> bool:
 
 
 def validate_url_for_fetch(url: str) -> str:
-    from urllib.parse import urlparse
+    """Validate scheme/hostname and block SSRF targets. Returns the URL if safe."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(status_code=400, detail="URL must use http or https scheme")
