@@ -1,399 +1,230 @@
-"""LLM-powered website analysis with a deterministic rule-based fallback.
-
-When ``OPENAI_API_KEY`` is configured the service calls OpenAI's
-``gpt-4o-mini`` with ``response_format`` set to ``json_object`` so the model
-returns valid JSON. When no key is available (or the LLM call fails) a
-rule-based analyzer builds the same response shape from the extracted page
-content, keeping the endpoint functional without any third-party credentials.
-"""
+"""LLM service for natural language query understanding."""
 
 import json
-from typing import Any, Dict, List
+import os
+from typing import Any, Dict, List, Optional
 
 from app.config import settings
-from app.services.website_extractor import extract_website_content
-
-
-def _urlparse_host(url: str) -> str:
-    from urllib.parse import urlparse
-
-    return urlparse(url).netloc or ""
+from app.schemas import UnderstoodQuery
 
 
 class LLMService:
-    def __init__(self) -> None:
+    """LLM service for natural language query understanding and prospect relevance classification."""
+
+    def __init__(self):
         self.api_key = settings.openai_api_key
         self.client = None
         if self.api_key:
             try:
                 from openai import OpenAI
-
                 self.client = OpenAI(api_key=self.api_key)
-            except Exception:  # pragma: no cover - import/runtime guard
+            except Exception:
                 self.client = None
 
-    # ------------------------------------------------------------------ #
-    # Public entry point
-    # ------------------------------------------------------------------ #
-    def analyze(self, url: str) -> Dict[str, Any]:
-        extracted = extract_website_content(url)
-        if not extracted.get("ok"):
-            return {
-                "success": False,
-                "website": url,
-                "error": extracted.get("error", "Failed to extract website content"),
-            }
+    def understand_query(self, query: str) -> UnderstoodQuery:
+        """Parse natural language query into structured search parameters."""
+        if self.client:
+            return self._understand_with_llm(query)
+        return self._understand_rule_based(query)
 
-        if self.client is not None:
-            return self._analyze_with_llm(url, extracted)
-
-        return self._analyze_rule_based(url, extracted)
-
-    # ------------------------------------------------------------------ #
-    # OpenAI path
-    # ------------------------------------------------------------------ #
-    def _analyze_with_llm(self, url: str, extracted: Dict[str, Any]) -> Dict[str, Any]:
+    def _understand_with_llm(self, query: str) -> UnderstoodQuery:
+        """Use LLM to understand the query."""
         system_prompt = (
-            "You are an expert business, SEO, and market research analyst. "
-            "Analyze the website content below and return ONLY valid JSON. "
-            "Do not invent search volumes or traffic figures. Mark any "
-            "competitor data that is AI-suggested rather than verified."
+            "You are an expert at parsing natural language prospect discovery queries. "
+            "Extract structured search parameters from the user's query. "
+            "Return ONLY valid JSON matching the specified schema."
         )
 
-        user_prompt = self._build_llm_prompt(url, extracted)
+        user_prompt = f"""
+Parse this prospect discovery query into structured parameters:
+
+Query: "{query}"
+
+Return JSON with these exact fields:
+{{
+  "interest": "Primary interest/topic (e.g., Football, Digital Marketing)",
+  "audience": "Target audience description (e.g., Football lovers, Startup founders)",
+  "city": "City name if mentioned, otherwise null",
+  "state": "State/province if mentioned, otherwise null",
+  "country": "Country if mentioned, otherwise null",
+  "target_type": "individual or business",
+  "search_keywords": ["keyword1", "keyword2", "keyword3"]
+}}
+
+Rules:
+- Extract location hierarchy: city, state/province, country
+- If only "Washington DC" mentioned, city="Washington DC", state="District of Columbia", country="USA"
+- If "London UK" mentioned, city="London", state=null, country="UK"
+- Generate 3-5 relevant search keywords for platform searches
+- target_type is "individual" unless query mentions "business", "company", "agency", "owners"
+"""
 
         try:
             completion = self.client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.3,
+                temperature=0.2,
                 response_format={"type": "json_object"},
             )
-            data = json.loads(completion.choices[0].message.content or "{}")
+            content = completion.choices[0].message.content
+            data = json.loads(content)
+            return UnderstoodQuery(**data)
         except Exception:
-            # Fall back gracefully so the endpoint never returns a 500
-            # just because the LLM had a hiccup.
-            return self._analyze_rule_based(url, extracted)
+            return self._understand_rule_based(query)
 
-        return self._shape_response(url, data)
+    def _understand_rule_based(self, query: str) -> UnderstoodQuery:
+        """Rule-based fallback for query understanding."""
+        query_lower = query.lower()
 
-    # ------------------------------------------------------------------ #
-    # Rule-based fallback
-    # ------------------------------------------------------------------ #
-    def _analyze_rule_based(self, url: str, extracted: Dict[str, Any]) -> Dict[str, Any]:
-        title = extracted.get("title") or ""
-        description = extracted.get("description") or ""
-        headings = extracted.get("headings") or []
-        text = extracted.get("text") or ""
-        if isinstance(text, list):
-            text = " ".join(text)
-        links = extracted.get("internal_links") or []
+        # Extract location components
+        city = None
+        state = None
+        country = None
 
-        brand_name = title or _urlparse_host(url) or "Unknown Brand"
-        category = self._guess_category(text, headings)
-        summary = description or (
-            text[:200] + "..." if len(text) > 200 else text
-        ) or "No description available."
-
-        h1_texts = [h["text"] for h in headings if h.get("level") == "h1"]
-        primary = h1_texts[0] if h1_texts else (title.split(" - ")[0] if title else category)
-        primary_keyword = primary or category
-
-        return self._shape_response(
-            url,
-            {
-                "brand": {
-                    "name": brand_name,
-                    "category": category,
-                    "summary": summary,
-                },
-                "competitor_analysis": {
-                    "brand_overview": summary,
-                    "competitors": self._build_competitors(category),
-                    "strengths": ["Direct customer relationships", "Niche focus"],
-                    "weaknesses_or_gaps": [
-                        "Limited brand recognition",
-                        "Smaller resource base",
-                    ],
-                    "competitive_advantages": ["Personalized service", "Agility"],
-                    "opportunities": [
-                        "Improve online visibility",
-                        "Expand service pages",
-                    ],
-                },
-                "target_search_queries": self._build_search_queries(
-                    brand_name, category, primary_keyword
-                ),
-                "seo_improvements": self._build_seo(
-                    brand_name, category, primary_keyword, description
-                ),
-                "top_services": self._infer_services(headings, links),
-                "target_audience": self._build_audience(category),
-            },
-        )
-
-    # ------------------------------------------------------------------ #
-    # Response shaping (nests the five sections under "analysis")
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def _shape_response(
-        url: str, data: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        section_keys = (
-            "competitor_analysis",
-            "target_search_queries",
-            "seo_improvements",
-            "top_services",
-            "target_audience",
-        )
-        analysis_block = {
-            key: data[key] for key in section_keys if key in data
+        # Common location patterns
+        location_patterns = {
+            "washington dc": ("Washington DC", "District of Columbia", "USA"),
+            "new york": ("New York", "New York", "USA"),
+            "los angeles": ("Los Angeles", "California", "USA"),
+            "chicago": ("Chicago", "Illinois", "USA"),
+            "san francisco": ("San Francisco", "California", "USA"),
+            "boston": ("Boston", "Massachusetts", "USA"),
+            "seattle": ("Seattle", "Washington", "USA"),
+            "austin": ("Austin", "Texas", "USA"),
+            "denver": ("Denver", "Colorado", "USA"),
+            "miami": ("Miami", "Florida", "USA"),
+            "london": ("London", None, "UK"),
+            "paris": ("Paris", None, "France"),
+            "berlin": ("Berlin", None, "Germany"),
+            "tokyo": ("Tokyo", None, "Japan"),
+            "sydney": ("Sydney", "New South Wales", "Australia"),
+            "mumbai": ("Mumbai", "Maharashtra", "India"),
+            "delhi": ("Delhi", None, "India"),
+            "bangalore": ("Bangalore", "Karnataka", "India"),
+            "ahmedabad": ("Ahmedabad", "Gujarat", "India"),
+            "dubai": ("Dubai", None, "UAE"),
+            "singapore": ("Singapore", None, "Singapore"),
+            "hong kong": ("Hong Kong", None, "Hong Kong"),
+            "toronto": ("Toronto", "Ontario", "Canada"),
+            "vancouver": ("Vancouver", "British Columbia", "Canada"),
         }
 
-        return {
-            "success": True,
-            "website": url,
-            "brand": data.get(
-                "brand",
-                {"name": "Unknown Brand", "category": "Unknown", "summary": ""},
-            ),
-            "analysis": analysis_block,
-        }
-
-    # ------------------------------------------------------------------ #
-    # Prompt construction
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def _build_llm_prompt(url: str, extracted: Dict[str, Any]) -> str:
-        return f"""
-Website URL: {url}
-Page title: {extracted.get('title', '')}
-Meta description: {extracted.get('description', '')}
-Headings: {extracted.get('headings', [])}
-Body text: {extracted.get('text', '')}
-Internal links: {extracted.get('internal_links', [])}
-
-Produce a JSON object with these exact keys:
-
-{{
-  "brand": {{"name": "...", "category": "...", "summary": "..."}},
-  "competitor_analysis": {{
-    "brand_overview": "...",
-    "competitors": [{{"name":"...","main_service":"...","target_market":"...","key_strength":"...","opportunity":"...","inferred":true}}],
-    "strengths": [...],
-    "weaknesses_or_gaps": [...],
-    "competitive_advantages": [...],
-    "opportunities": [...]
-  }},
-  "target_search_queries": [
-    {{"query":"...","platforms":["Google"],"intent":"...","business_relevance":"...","target_audience":"..."}}
-  ],
-  "seo_improvements": {{
-    "primary_keyword":"...",
-    "secondary_keywords":["..."],
-    "long_tail_keywords":["..."],
-    "relevant_business_keywords":["..."],
-    "recommended_title":"...",
-    "improved_title_structure":"...",
-    "meta_description":"...",
-    "supporting_content":["..."]
-  }},
-  "top_services": [
-    {{"service_name":"...","description":"...","target_industry":"...","target_customer":"...","main_benefit":"...","inferred":false}}
-  ],
-  "target_audience": {{
-    "primary_audience":["..."],
-    "secondary_audience":["..."],
-    "industry_segments":["..."],
-    "business_types":["..."],
-    "customer_profiles":["..."],
-    "location_focus":"...",
-    "customer_needs":["..."],
-    "customer_interests":["..."],
-    "recommended_segments":["..."]
-  }}
-}}
-
-Return exactly 5 target search queries and exactly 5 top services where possible.
-"""
-
-    # ------------------------------------------------------------------ #
-    # Heuristic helpers (used by the rule-based fallback)
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def _guess_category(text: str, headings: list) -> str:
-        blob = " ".join([h.get("text", "") for h in headings] + [text]).lower()
-        keywords = {
-            "web development": ["web development", "website", "web design", "web app"],
-            "digital marketing": ["digital marketing", "seo", "social media", "marketing"],
-            "software development": ["software", "custom software", "saas", "application development"],
-            "e-commerce": ["e-commerce", "online store", "shop", "cart"],
-            "consulting": ["consulting", "consultancy", "advisory"],
-            "technology services": ["technology", "it services", "tech"],
-        }
-        for category, kws in keywords.items():
-            if any(k in blob for k in kws):
-                return category.title()
-        return "Technology Services"
-
-    @staticmethod
-    def _infer_services(headings: list, links: list) -> List[Dict[str, Any]]:
-        services: List[Dict[str, Any]] = []
-        seen = set()
-        candidates = [
-            h.get("text", "")
-            for h in headings
-            if h.get("level") in ("h1", "h2", "h3")
-        ]
-        candidates += [l.get("label", "") for l in links]
-
-        for c in candidates:
-            c = c.strip()
-            if not c or len(c) < 3 or c.lower() in seen:
-                continue
-            seen.add(c.lower())
-            services.append(
-                {
-                    "service_name": c,
-                    "description": f"{c} offering based on website content.",
-                    "target_industry": "General",
-                    "target_customer": "Businesses and individuals",
-                    "main_benefit": "Addresses a core customer need.",
-                    "inferred": True,
-                }
-            )
-            if len(services) >= 5:
+        query_lower = query.lower()
+        for pattern, (c, s, co) in location_patterns.items():
+            if pattern in query_lower:
+                city = c
+                state = s
+                country = co
                 break
 
-        if not services:
-            services.append(
-                {
-                    "service_name": "Consultation",
-                    "description": "Initial business consultation.",
-                    "target_industry": "General",
-                    "target_customer": "Prospective clients",
-                    "main_benefit": "Understand client needs.",
-                    "inferred": True,
-                }
-            )
-        return services[:5]
-
-    @staticmethod
-    def _build_search_queries(brand_name: str, category: str, primary: str) -> List[Dict[str, str]]:
-        return [
-            {
-                "query": f"Best {category} company",
-                "platforms": ["Google", "LinkedIn"],
-                "intent": "Service Discovery",
-                "business_relevance": f"Customers looking for {category}",
-                "target_audience": "Prospective clients",
-            },
-            {
-                "query": f"{primary} services",
-                "platforms": ["Google"],
-                "intent": "Service Search",
-                "business_relevance": f"Direct demand for {primary}",
-                "target_audience": "Service buyers",
-            },
-            {
-                "query": f"{brand_name} reviews",
-                "platforms": ["Google", "Facebook"],
-                "intent": "Research",
-                "business_relevance": "Brand trust and reputation",
-                "target_audience": "Evaluating customers",
-            },
-            {
-                "query": f"{category} ideas",
-                "platforms": ["Instagram"],
-                "intent": "Inspiration",
-                "business_relevance": "Visual discovery",
-                "target_audience": "Creative buyers",
-            },
-            {
-                "query": f"Affordable {category}",
-                "platforms": ["X"],
-                "intent": "Service Discovery",
-                "business_relevance": "Price-sensitive demand",
-                "target_audience": "Small businesses and startups",
-            },
+        # Extract interest/keywords - simple approach
+        interest_keywords = [
+            "football", "soccer", "cricket", "basketball", "tennis", "golf",
+            "digital marketing", "marketing", "seo", "seo expert", "social media marketing",
+            "startup", "startup founder", "entrepreneur", "founder", "co-founder",
+            "restaurant", "restaurant owner", "chef", "food",
+            "real estate", "real estate agent", "realtor",
+            "software", "software engineer", "developer", "programmer",
+            "data science", "data scientist", "machine learning", "ai",
+            "finance", "investment", "venture capital", "vc",
+            "lawyer", "attorney", "legal",
+            "doctor", "physician", "healthcare",
+            "teacher", "professor", "education",
         ]
 
-    @staticmethod
-    def _build_seo(
-        brand_name: str, category: str, primary: str, description: str
-    ) -> Dict[str, Any]:
-        return {
-            "primary_keyword": primary,
-            "secondary_keywords": [category, "services", "company"],
-            "long_tail_keywords": [
-                f"best {category} company",
-                f"affordable {primary}",
-                f"{category} for small business",
-            ],
-            "relevant_business_keywords": [category, primary, "solutions", "services"],
-            "recommended_title": f"{primary} | {brand_name} {category}",
-            "improved_title_structure": "Primary Keyword | Brand Name | Category",
-            "meta_description": description
-            or f"{brand_name} provides {category} solutions. Learn about our services and how we can help your business grow.",
-            "supporting_content": [
-                "Service landing pages",
-                "Industry-specific pages",
-                "Frequently Asked Questions",
-                "Blog topics",
-                "Location-based landing pages",
-            ],
+        interest = "General"
+        for keyword in interest_keywords:
+            if keyword in query.lower():
+                interest = keyword.title()
+                break
+
+        # Determine audience
+        audience = query  # fallback to full query
+        audience_keywords = {
+            "lovers": "enthusiasts",
+            "fans": "enthusiasts",
+            "enthusiasts": "enthusiasts",
+            "owners": "business owners",
+            "founders": "founders",
+            "founder": "founder",
+            "entrepreneurs": "entrepreneurs",
+            "entrepreneur": "entrepreneur",
+            "professionals": "professionals",
+            "experts": "experts",
+            "specialists": "specialists",
+            "consultants": "consultants",
+            "agencies": "agencies",
+            "companies": "companies",
+            "startups": "startups",
         }
 
-    @staticmethod
-    def _build_audience(category: str) -> Dict[str, Any]:
-        return {
-            "primary_audience": ["Small businesses", "Startups"],
-            "secondary_audience": ["Enterprise companies", "Professional services"],
-            "industry_segments": [category, "Technology", "Retail"],
-            "business_types": ["SMB", "Startup", "Agency"],
-            "customer_profiles": ["Business owner", "Marketing manager", "CTO"],
-            "location_focus": None,
-            "customer_needs": ["Online presence", "Lead generation", "Brand visibility"],
-            "customer_interests": ["Technology", "Growth", "Digital transformation"],
-            "recommended_segments": [
-                "Small businesses seeking websites",
-                "Startups needing digital solutions",
-            ],
-        }
+        audience = "Professionals"
+        for kw, aud in audience_keywords.items():
+            if kw in query.lower():
+                audience = aud
+                break
 
-    @staticmethod
-    def _build_competitors(category: str) -> List[Dict[str, Any]]:
-        return [
-            {
-                "name": f"Leading {category} Provider",
-                "main_service": category,
-                "target_market": "SMB and enterprise",
-                "key_strength": "Established brand",
-                "opportunity": "Improve customer engagement",
-                "inferred": True,
-            },
-            {
-                "name": f"Affordable {category} Agency",
-                "main_service": category,
-                "target_market": "Small businesses",
-                "key_strength": "Low pricing",
-                "opportunity": "Expand service range",
-                "inferred": True,
-            },
-            {
-                "name": f"Premium {category} Studio",
-                "main_service": category,
-                "target_market": "Enterprise",
-                "key_strength": "High-end design",
-                "opportunity": "Improve online visibility",
-                "inferred": True,
-            },
-        ]
+        # Generate search keywords
+        search_keywords = [interest.lower()]
+        if city:
+            search_keywords.append(city.lower())
+        if state:
+            search_keywords.append(state.lower())
+        if country:
+            search_keywords.append(country.lower())
+
+        return UnderstoodQuery(
+            interest=interest,
+            audience=audience,
+            city=city,
+            state=state,
+            country=country,
+            target_type="individual",
+            search_keywords=search_keywords[:5],
+        )
+
+    def classify_relevance(self, prospect_data: dict, understood_query: dict) -> float:
+        """Classify prospect relevance to the query (0.0 to 1.0)."""
+        # Rule-based relevance scoring
+        score = 0.0
+        factors = 0
+
+        # Interest match
+        bio = (prospect_data.get("bio") or "").lower()
+        interest = understood_query.get("interest", "").lower()
+        if interest and interest in bio:
+            score += 0.4
+        factors += 1
+
+        # Location match
+        loc = (prospect_data.get("location") or "").lower()
+        city = (understood_query.get("city") or "").lower()
+        state = (understood_query.get("state") or "").lower()
+        country = (understood_query.get("country") or "").lower()
+
+        if city and city in loc:
+            score += 0.3
+        elif state and state in loc:
+            score += 0.2
+        elif country and country in loc:
+            score += 0.1
+        factors += 1
+
+        # Interest keywords in bio
+        bio_keywords = set(bio.split())
+        query_keywords = set((understood_query.get("interest", "") + " " + " ".join(understood_query.get("search_keywords", []))).lower().split())
+        if bio_keywords and query_keywords:
+            overlap = len(bio_keywords & query_keywords)
+            if overlap > 0:
+                score += 0.2 * min(overlap / len(query_keywords), 1.0)
+        factors += 1
+
+        return min(score, 1.0) if factors > 0 else 0.0
 
 
-def analyze_website(url: str) -> Dict[str, Any]:
-    """Convenience wrapper used by the service layer."""
-    return LLMService().analyze(url)
+def understand_query(query: str) -> UnderstoodQuery:
+    """Convenience function to understand a query."""
+    return LLMService().understand_query(query)

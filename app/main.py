@@ -1,76 +1,92 @@
-"""FastAPI application exposing the /link-analysis endpoint."""
+"""FastAPI application for AI-Powered Multi-Platform Prospect Discovery."""
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+import time
 
 from app.schemas import (
     ErrorResponse,
-    LinkAnalysisRequest,
-    LinkAnalysisResponse,
+    ProspectDiscoveryRequest,
+    ProspectDiscoveryResponse,
 )
-from app.services.analysis_service import run_link_analysis
+from app.services.prospect_service import discover_prospects
+from app.utils.security import RateLimitMiddleware, validate_query
+from app.utils.logging_config import logger, log_request, log_error
+
 
 app = FastAPI(
-    title="Dxora Test - AI-Powered Website Link Analysis API",
+    title="Dxora Test - AI-Powered Multi-Platform Prospect Discovery API",
     version="1.0.0",
     description=(
-        "Accepts a website URL, extracts its content, analyzes it with an LLM "
-        "(or a rule-based fallback when no LLM key is configured), and returns "
-        "structured business, competitor, SEO, services, and audience insights."
+        "Accepts a natural-language prospect discovery query, understands the intent, "
+        "discovers prospects across multiple platforms, consolidates duplicates, "
+        "and returns structured JSON with verified social links and contact info."
     ),
 )
 
+# Security middleware
+app.add_middleware(RateLimitMiddleware)
 
-@app.get("/", tags=["health"])
+# CORS configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/")
 def root():
-    """Service info and available endpoints."""
     return {
-        "service": "Dxora AI-Powered Website Link Analysis API",
+        "service": "Dxora AI-Powered Multi-Platform Prospect Discovery API",
         "endpoints": {
-            "link_analysis": "POST /link-analysis",
+            "prospect_discovery": "POST /prospect-discovery",
         },
         "docs": "/docs",
     }
 
 
 @app.post(
-    "/link-analysis",
-    response_model=LinkAnalysisResponse,
-    tags=["analysis"],
-    summary="Analyze a website URL",
+    "/prospect-discovery",
+    response_model=ProspectDiscoveryResponse,
+    summary="Discover prospects from natural language query",
 )
-def link_analysis(request: LinkAnalysisRequest):
-    """Analyze a website and return five structured insight sections.
+def prospect_discovery(request: ProspectDiscoveryRequest):
+    """Discover prospects from a natural language query across multiple platforms."""
+    start_time = time.time()
+    client_ip = "unknown"
 
-    Sections returned:
-    1. Competitor vs Your Brand Details
-    2. Top 5 Target Search Queries
-    3. SEO Improvement
-    4. Top 5 Services
-    5. Target Audience Identification
-    """
-    url = str(request.url)
+    # Validate and sanitize query
+    query = validate_query(request.query)
+
     try:
-        result = run_link_analysis(url)
-    except HTTPException:
-        # Let FastAPI handle validation/SSRF errors with their proper status codes.
-        raise
-    except Exception as exc:  # pragma: no cover - defensive top-level guard
+        result = discover_prospects(query)
+    except Exception as exc:
+        duration_ms = (time.time() - start_time) * 1000
+        log_error("prospect_discovery", exc, {"query": query[:50]})
+        log_request(query, "unknown", False, 0, duration_ms)
         return JSONResponse(
             status_code=500,
             content=ErrorResponse(
                 success=False,
-                error="Analysis failed",
-                detail=str(exc),
+                error="Prospect discovery failed",
+                detail="Internal server error",
             ).dict(),
         )
 
-    if not result.get("success"):
+    duration_ms = (time.time() - start_time) * 1000
+    prospect_count = result.total_prospects if hasattr(result, 'total_prospects') else len(result.prospects) if hasattr(result, 'prospects') else 0
+    log_request(query, "unknown", result.success, prospect_count, duration_ms)
+
+    if not result.success:
         return JSONResponse(
             status_code=400,
             content=ErrorResponse(
                 success=False,
-                error=result.get("error", "Unknown error"),
+                error="Discovery failed",
             ).dict(),
         )
 
